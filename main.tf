@@ -7,7 +7,7 @@ resource "google_service_account" "vm_sa" {
 resource "google_compute_instance" "vm" {
   name         = "terraform-test-vm"
   machine_type = "e2-small"
-  zone         = "us-central1-a"
+  zone         = "us-east-1a"
 
   boot_disk {
     initialize_params {
