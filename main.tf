@@ -1,29 +1,30 @@
-provider "google" {
-  project = var.project_id
+terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = ">= 3.53.0"
+    }
+  }
 }
 
-# ==============================================================================
-# 1. IAM & SERVICE ACCOUNTS
-# ==============================================================================
-module "service_account" {
-  source  = "terraform-google-modules/service-accounts/google"
-  version = "~> 4.0"
+provider "google" {
+  project = "mishrarishabh-sbd-1"
+}
 
-  project_id   = var.project_id
+module "service_account" {
+  source       = "github.com/terraform-google-modules/terraform-google-service-accounts"
+  project_id   = "mishrarishabh-sbd-1"
   names        = ["app-cloudrun-sa"]
   display_name = "Cloud Run App Service Account"
   description  = "Identity for Cloud Run to access Spanner"
 }
 
-# ==============================================================================
-# 2. REGIONAL SPANNER INSTANCE
-# ==============================================================================
 module "spanner" {
-  source = "GoogleCloudPlatform/cloud-spanner/google"
+  source = "github.com/GoogleCloudPlatform/terraform-google-cloud-spanner"
 
-  project_id            = var.project_id
+  project_id            = "mishrarishabh-sbd-1"
   instance_name         = "regional-app-db"
-  instance_config       = "regional-${var.spanner_region}"
+  instance_config       = "regional-us-central1"
   instance_display_name = "Regional Application Spanner"
   instance_size = {
     num_nodes = 1
@@ -33,47 +34,60 @@ module "spanner" {
       version_retention_period = "3d"
       ddl                      = []
       deletion_protection      = false
-      database_iam             = []
       enable_backup            = false
       create_db                = true
+      database_iam             = [
+        "serviceAccount:app-cloudrun-sa@mishrarishabh-sbd-1.iam.gserviceaccount.com=>roles/spanner.databaseUser"
+      ]
     }
   }
 }
 
-# Grant the Cloud Run Service Account access to the Spanner Database
-resource "google_spanner_database_iam_member" "spanner_db_user" {
-  project  = var.project_id
-  instance = module.spanner.spanner_instance_id
-  database = "app-database"
-  role     = "roles/spanner.databaseUser"
-  member   = "serviceAccount:${module.service_account.email}"
-}
+module "cloud_run_us_central1" {
+  source = "github.com/GoogleCloudPlatform/terraform-google-cloud-run//modules/v2"
 
-# ==============================================================================
-# 3. MULTI-REGIONAL CLOUD RUN SERVICES (DIRECT PUBLIC ACCESS)
-# ==============================================================================
-module "cloud_run" {
-  source = "GoogleCloudPlatform/cloud-run/google//modules/v2"
-
-  for_each = toset(var.regions)
-
-  project_id             = var.project_id
-  location               = each.key
-  service_name           = "app-service-${each.key}"
+  project_id             = "mishrarishabh-sbd-1"
+  location               = "us-central1"
+  service_name           = "app-service-us-central1"
   create_service_account = false
-  service_account        = module.service_account.email
-  ingress                = "INGRESS_TRAFFIC_ALL"
-
-  members = ["allUsers"]
+  service_account        = "app-cloudrun-sa@mishrarishabh-sbd-1.iam.gserviceaccount.com"
+  
+  # Remediating the public ingress to internal + load balancing for better security
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   containers = [
     {
-      container_image = var.container_image
+      container_image = "gcr.io/cloudrun/hello"
       env_vars = {
-        SPANNER_PROJECT_ID  = var.project_id
-        SPANNER_INSTANCE_ID = element(split("/", module.spanner.spanner_instance_id), 3)
+        SPANNER_PROJECT_ID  = "mishrarishabh-sbd-1"
+        SPANNER_INSTANCE_ID = "regional-app-db"
         SPANNER_DATABASE_ID = "app-database"
       }
     }
   ]
 }
+
+module "cloud_run_us_east1" {
+  source = "github.com/GoogleCloudPlatform/terraform-google-cloud-run//modules/v2"
+
+  project_id             = "mishrarishabh-sbd-1"
+  location               = "us-east1"
+  service_name           = "app-service-us-east1"
+  create_service_account = false
+  service_account        = "app-cloudrun-sa@mishrarishabh-sbd-1.iam.gserviceaccount.com"
+  
+  # Remediating the public ingress to internal + load balancing for better security
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+
+  containers = [
+    {
+      container_image = "gcr.io/cloudrun/hello"
+      env_vars = {
+        SPANNER_PROJECT_ID  = "mishrarishabh-sbd-1"
+        SPANNER_INSTANCE_ID = "regional-app-db"
+        SPANNER_DATABASE_ID = "app-database"
+      }
+    }
+  ]
+}
+
