@@ -16,15 +16,15 @@ module "service_account" {
 }
 
 # ==============================================================================
-# 2. REGIONAL SPANNER INSTANCE
+# 2. MULTI-REGIONAL SPANNER INSTANCE
 # ==============================================================================
 module "spanner" {
   source = "GoogleCloudPlatform/cloud-spanner/google"
 
   project_id            = var.project_id
-  instance_name         = "regional-app-db"
-  instance_config       = "regional-${var.spanner_region}"
-  instance_display_name = "Regional Application Spanner"
+  instance_name         = "multi-region-app-db"
+  instance_config       = var.spanner_instance_config
+  instance_display_name = "Multi-Region Application Spanner"
   instance_size = {
     num_nodes = 1
   }

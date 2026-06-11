@@ -9,10 +9,10 @@ variable "regions" {
   default     = ["us-central1", "us-east1"]
 }
 
-variable "spanner_region" {
-  description = "The region for the Spanner instance"
+variable "spanner_instance_config" {
+  description = "The multi-region instance config for the Spanner instance"
   type        = string
-  default     = "us-central1"
+  default     = "nam3"
 }
 
 variable "container_image" {
