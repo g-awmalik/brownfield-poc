@@ -1,36 +1,35 @@
 provider "google" {
-  project = var.project_id
+  project = "mishrarishabh-sbd-1"
 }
 
 # ==============================================================================
 # 1. IAM & SERVICE ACCOUNTS
 # ==============================================================================
 module "service_account" {
-  source  = "terraform-google-modules/service-accounts/google"
-  version = "~> 4.0"
+  source  = "github.com/terraform-google-modules/terraform-google-service-accounts"
 
-  project_id   = var.project_id
+  project_id   = "mishrarishabh-sbd-1"
   names        = ["app-cloudrun-sa"]
   display_name = "Cloud Run App Service Account"
   description  = "Identity for Cloud Run to access Spanner"
 }
 
 # ==============================================================================
-# 2. REGIONAL SPANNER INSTANCE
+# 2. MULTI-REGIONAL SPANNER INSTANCE
 # ==============================================================================
 module "spanner" {
-  source = "GoogleCloudPlatform/cloud-spanner/google"
+  source = "github.com/GoogleCloudPlatform/terraform-google-cloud-spanner"
 
-  project_id            = var.project_id
-  instance_name         = "regional-app-db"
-  instance_config       = "regional-${var.spanner_region}"
-  instance_display_name = "Regional Application Spanner"
+  project_id            = "mishrarishabh-sbd-1"
+  instance_name         = "multi-region-app-db"
+  instance_config       = "nam3"
+  instance_display_name = "Multi-Region Application Spanner"
   instance_size = {
     num_nodes = 1
   }
   database_config = {
     "app-database" = {
-      version_retention_period = "3d"
+      version_retention_period = "7d"
       ddl                      = []
       deletion_protection      = false
       database_iam             = []
@@ -40,37 +39,50 @@ module "spanner" {
   }
 }
 
-# Grant the Cloud Run Service Account access to the Spanner Database
-resource "google_spanner_database_iam_member" "spanner_db_user" {
-  project  = var.project_id
-  instance = module.spanner.spanner_instance_id
-  database = "app-database"
-  role     = "roles/spanner.databaseUser"
-  member   = "serviceAccount:${module.service_account.email}"
-}
-
 # ==============================================================================
-# 3. MULTI-REGIONAL CLOUD RUN SERVICES (DIRECT PUBLIC ACCESS)
+# 3. MULTI-REGIONAL CLOUD RUN SERVICES (INTERNAL + LB ACCESS)
 # ==============================================================================
-module "cloud_run" {
-  source = "GoogleCloudPlatform/cloud-run/google//modules/v2"
+module "cloud_run_central" {
+  source = "github.com/GoogleCloudPlatform/terraform-google-cloud-run//modules/v2"
 
-  for_each = toset(var.regions)
-
-  project_id             = var.project_id
-  location               = each.key
-  service_name           = "app-service-${each.key}"
+  project_id             = "mishrarishabh-sbd-1"
+  location               = "us-central1"
+  service_name           = "app-service-us-central1"
   create_service_account = false
   service_account        = module.service_account.email
-  ingress                = "INGRESS_TRAFFIC_ALL"
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   members = ["allUsers"]
 
   containers = [
     {
-      container_image = var.container_image
+      container_image = "gcr.io/cloudrun/hello"
       env_vars = {
-        SPANNER_PROJECT_ID  = var.project_id
+        SPANNER_PROJECT_ID  = "mishrarishabh-sbd-1"
+        SPANNER_INSTANCE_ID = element(split("/", module.spanner.spanner_instance_id), 3)
+        SPANNER_DATABASE_ID = "app-database"
+      }
+    }
+  ]
+}
+
+module "cloud_run_east" {
+  source = "github.com/GoogleCloudPlatform/terraform-google-cloud-run//modules/v2"
+
+  project_id             = "mishrarishabh-sbd-1"
+  location               = "us-east1"
+  service_name           = "app-service-us-east1"
+  create_service_account = false
+  service_account        = module.service_account.email
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+
+  members = ["allUsers"]
+
+  containers = [
+    {
+      container_image = "gcr.io/cloudrun/hello"
+      env_vars = {
+        SPANNER_PROJECT_ID  = "mishrarishabh-sbd-1"
         SPANNER_INSTANCE_ID = element(split("/", module.spanner.spanner_instance_id), 3)
         SPANNER_DATABASE_ID = "app-database"
       }
@@ -81,49 +93,34 @@ module "cloud_run" {
 # ==============================================================================
 # 4. GLOBAL LOAD BALANCER FRONTING CLOUD RUN
 # ==============================================================================
-
-# Serverless NEG for us-central1
-resource "google_compute_region_network_endpoint_group" "serverless_neg_central" {
-  name                  = "serverless-neg-central"
-  network_endpoint_type = "SERVERLESS"
-  region                = "us-central1"
-  project               = var.project_id
-  cloud_run {
-    service = module.cloud_run["us-central1"].service_name
-  }
-}
-
-# Serverless NEG for us-east1
-resource "google_compute_region_network_endpoint_group" "serverless_neg_east" {
-  name                  = "serverless-neg-east"
-  network_endpoint_type = "SERVERLESS"
-  region                = "us-east1"
-  project               = var.project_id
-  cloud_run {
-    service = module.cloud_run["us-east1"].service_name
-  }
-}
-
 module "lb-http" {
-  source  = "GoogleCloudPlatform/lb-http/google//modules/serverless_negs"
-  version = "~> 12.0"
+  source  = "github.com/GoogleCloudPlatform/terraform-google-lb-http//modules/serverless_negs"
 
-  project = var.project_id
+  project = "mishrarishabh-sbd-1"
   name    = "global-app-lb"
 
-  ssl                             = false
-  managed_ssl_certificate_domains = []
-  https_redirect                  = false
+  ssl                             = true
+  managed_ssl_certificate_domains = ["app.example.com"]
+  https_redirect                  = true
 
   backends = {
     default = {
       description = "Serverless NEGs routing to multi-regional Cloud Run"
-      groups = [
+      groups = []
+      serverless_neg_backends = [
         {
-          group = google_compute_region_network_endpoint_group.serverless_neg_central.id
+          region = "us-central1"
+          type   = "cloud-run"
+          service = {
+            name = module.cloud_run_central.service_name
+          }
         },
         {
-          group = google_compute_region_network_endpoint_group.serverless_neg_east.id
+          region = "us-east1"
+          type   = "cloud-run"
+          service = {
+            name = module.cloud_run_east.service_name
+          }
         }
       ]
       enable_cdn              = false
