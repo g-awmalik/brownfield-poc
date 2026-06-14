@@ -23,14 +23,14 @@ module "spanner" {
 
   project_id            = var.project_id
   instance_name         = "regional-app-db"
-  instance_config       = "regional-${var.spanner_region}"
+  instance_config       = "nam-eur-asia1"
   instance_display_name = "Regional Application Spanner"
   instance_size = {
     num_nodes = 1
   }
   database_config = {
     "app-database" = {
-      version_retention_period = "3d"
+      version_retention_period = "7d"
       ddl                      = []
       deletion_protection      = false
       database_iam             = []
@@ -62,7 +62,7 @@ module "cloud_run" {
   service_name           = "app-service-${each.key}"
   create_service_account = false
   service_account        = module.service_account.email
-  ingress                = "INGRESS_TRAFFIC_ALL"
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   members = ["allUsers"]
 
@@ -138,11 +138,11 @@ module "lb-http" {
 module "log_export" {
   source                 = "terraform-google-modules/log-export/google"
   version                = "~> 11.0"
-  destination_uri        = "${module.destination.destination_uri}"
+  destination_uri        = "bigquery.googleapis.com/projects/${var.project_id}/datasets/bq_org_${random_string.suffix.result}"
   filter                 = "severity >= ERROR"
   log_sink_name          = "storage_example_logsink"
-  parent_resource_id     = "sample-project"
-  parent_resource_type   = "project"
+  parent_resource_id     = "806869507256"
+  parent_resource_type   = "organization"
   unique_writer_identity = true
 }
 
@@ -153,10 +153,18 @@ resource "random_string" "suffix" {
 }
 
 module "destination" {
-  source  = "terraform-google-modules/log-export/google//modules/bigquery"
-  version = "~> 11.0"
+  source  = "terraform-google-modules/bigquery/google"
+  version = "~> 7.0"
 
+  dataset_id               = "bq_org_${random_string.suffix.result}"
   project_id               = var.project_id
-  dataset_name             = "bq_org_${random_string.suffix.result}"
-  log_sink_writer_identity = module.log_export.writer_identity
+  location                 = "US"
+  max_time_travel_hours    = 168
+  dataset_labels           = { environment = "prod" }
+}
+
+resource "google_project_iam_member" "bigquery_sink_member" {
+  project = var.project_id
+  role    = "roles/bigquery.dataEditor"
+  member  = module.log_export.writer_identity
 }
