@@ -16,21 +16,21 @@ module "service_account" {
 }
 
 # ==============================================================================
-# 2. REGIONAL SPANNER INSTANCE
+# 2. MULTI-REGIONAL SPANNER INSTANCE (REMEDIATED FOR HIGH AVAILABILITY)
 # ==============================================================================
 module "spanner" {
   source = "GoogleCloudPlatform/cloud-spanner/google"
 
   project_id            = var.project_id
   instance_name         = "regional-app-db"
-  instance_config       = "regional-${var.spanner_region}"
+  instance_config       = "nam-eur-asia1" # Promoted from regional to multi-regional for 99.999% SLA and high-availability
   instance_display_name = "Regional Application Spanner"
   instance_size = {
     num_nodes = 1
   }
   database_config = {
     "app-database" = {
-      version_retention_period = "3d"
+      version_retention_period = "7d" # Extended to 7 days (maximum duration) to secure PITR for logical recovery
       ddl                      = []
       deletion_protection      = false
       database_iam             = []
@@ -50,7 +50,7 @@ resource "google_spanner_database_iam_member" "spanner_db_user" {
 }
 
 # ==============================================================================
-# 3. MULTI-REGIONAL CLOUD RUN SERVICES (DIRECT PUBLIC ACCESS)
+# 3. MULTI-REGIONAL CLOUD RUN SERVICES (REMEDIATED INGRESS RESTRICTIONS)
 # ==============================================================================
 module "cloud_run" {
   source = "GoogleCloudPlatform/cloud-run/google//modules/v2"
@@ -62,7 +62,7 @@ module "cloud_run" {
   service_name           = "app-service-${each.key}"
   create_service_account = false
   service_account        = module.service_account.email
-  ingress                = "INGRESS_TRAFFIC_ALL"
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" # Secures services by routing public traffic exclusively through the Global HTTP Load Balancer
 
   members = ["allUsers"]
 
@@ -79,7 +79,7 @@ module "cloud_run" {
 }
 
 # ==============================================================================
-# 4. GLOBAL LOAD BALANCER FRONTING CLOUD RUN
+# 4. GLOBAL LOAD BALANCER FRONTING CLOUD RUN (FRONTING SECURE INTERNAL CLOUD RUN)
 # ==============================================================================
 
 # Serverless NEGs
@@ -132,17 +132,18 @@ module "lb-http" {
 }
 
 # ==============================================================================
-# 5. LOG EXPORT (SINK)
+# 5. LOG EXPORT (SINK - REMEDIATED TO ORGANIZATION-LEVEL AGGREGATED SINK)
 # ==============================================================================
 
 module "log_export" {
   source                 = "terraform-google-modules/log-export/google"
   version                = "~> 11.0"
-  destination_uri        = "${module.destination.destination_uri}"
+  destination_uri        = "bigquery.googleapis.com/projects/${var.project_id}/datasets/${google_bigquery_dataset.dataset.dataset_id}"
   filter                 = "severity >= ERROR"
   log_sink_name          = "storage_example_logsink"
-  parent_resource_id     = "sample-project"
-  parent_resource_type   = "project"
+  parent_resource_id     = var.org_id       # Remediated to use designated Organization ID
+  parent_resource_type   = "organization"   # Remediated to organization audit type for global visibility
+  include_children       = true             # Enables child folder/project log aggregation
   unique_writer_identity = true
 }
 
@@ -152,11 +153,28 @@ resource "random_string" "suffix" {
   special = false
 }
 
-module "destination" {
-  source  = "terraform-google-modules/log-export/google//modules/bigquery"
-  version = "~> 11.0"
+# -----------------
+# API activation 
+# -----------------
+resource "google_project_service" "enable_destination_api" {
+  project                    = var.project_id
+  service                    = "bigquery.googleapis.com"
+  disable_on_destroy         = false
+  disable_dependent_services = false
+}
 
-  project_id               = var.project_id
-  dataset_name             = "bq_org_${random_string.suffix.result}"
-  log_sink_writer_identity = module.log_export.writer_identity
+# Native BigQuery Dataset Configuration with Remedated Max (7-Day) Time Travel
+resource "google_bigquery_dataset" "dataset" {
+  dataset_id                  = "bq_org_${random_string.suffix.result}"
+  project                     = google_project_service.enable_destination_api.project
+  location                    = "US"
+  description                 = "Log export dataset"
+  delete_contents_on_destroy  = false
+  max_time_travel_hours       = 168 # Remediated: Set to the maximum (7-day / 168h) time travel recovery window for maximum logical reliability
+}
+
+resource "google_project_iam_member" "bigquery_sink_member" {
+  project = google_bigquery_dataset.dataset.project
+  role    = "roles/bigquery.dataEditor"
+  member  = module.log_export.writer_identity
 }
