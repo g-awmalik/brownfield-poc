@@ -21,3 +21,9 @@ variable "container_image" {
   type        = string
   default     = "gcr.io/cloudrun/hello"
 }
+
+variable "org_id" {
+  description = "The organization ID for logging sink"
+  type        = string
+  default     = "806869507256"
+}
