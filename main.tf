@@ -6,9 +6,9 @@ module "spanner" {
   source = "GoogleCloudPlatform/cloud-spanner/google"
 
   project_id            = var.project_id
-  instance_name         = "regional-app-db"
-  instance_config       = "regional-${var.spanner_region}"
-  instance_display_name = "Regional Application Spanner"
+  instance_name         = "multiregion-app-db"
+  instance_config       = "nam3"
+  instance_display_name = "Multi-Regional Application Spanner"
   instance_size = {
     num_nodes = 1
   }
