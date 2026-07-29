@@ -34,9 +34,10 @@ module "spanner" {
     "app-database" = {
       version_retention_period = "3d"
       ddl                      = []
-      deletion_protection      = false
+      deletion_protection      = true
       database_iam             = []
-      enable_backup            = false
+      enable_backup            = true
+      backup_retention         = "86400s"
       create_db                = true
     }
   }
@@ -64,7 +65,7 @@ module "cloud_run" {
   service_name           = "app-service-${each.key}"
   create_service_account = false
   service_account        = module.service_account.email
-  ingress                = "INGRESS_TRAFFIC_ALL"
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   members = ["allUsers"]
 
@@ -75,6 +76,16 @@ module "cloud_run" {
         SPANNER_PROJECT_ID  = var.project_id
         SPANNER_INSTANCE_ID = element(split("/", module.spanner.spanner_instance_id), 3)
         SPANNER_DATABASE_ID = "app-database"
+      }
+      startup_probe = {
+        http_get = {
+          path = "/"
+        }
+      }
+      liveness_probe = {
+        http_get = {
+          path = "/"
+        }
       }
     }
   ]
@@ -96,6 +107,24 @@ resource "google_compute_region_network_endpoint_group" "serverless_neg" {
   }
 }
 
+resource "google_compute_security_policy" "security_policy" {
+  name        = "global-app-lb-security-policy"
+  description = "Basic Cloud Armor security policy"
+  project     = var.project_id
+
+  rule {
+    action   = "allow"
+    priority = "2147483647"
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = ["*"]
+      }
+    }
+    description = "Default rule"
+  }
+}
+
 module "lb-http" {
   source  = "GoogleCloudPlatform/lb-http/google//modules/serverless_negs"
   version = "~> 12.0"
@@ -103,9 +132,9 @@ module "lb-http" {
   project = var.project_id
   name    = "global-app-lb"
 
-  ssl                             = false
-  managed_ssl_certificate_domains = []
-  https_redirect                  = false
+  ssl                             = true
+  managed_ssl_certificate_domains = ["app.example.com"]
+  https_redirect                  = true
 
   backends = {
     default = {
@@ -116,7 +145,7 @@ module "lb-http" {
         }
       ]
       enable_cdn              = false
-      security_policy         = null
+      security_policy         = google_compute_security_policy.security_policy.id
       custom_request_headers  = null
       custom_response_headers = null
 
@@ -143,7 +172,7 @@ module "log_export" {
   destination_uri        = "${module.destination.destination_uri}"
   filter                 = "severity >= ERROR"
   log_sink_name          = "storage_example_logsink"
-  parent_resource_id     = "sample-project"
+  parent_resource_id     = var.project_id
   parent_resource_type   = "project"
   unique_writer_identity = true
 }
