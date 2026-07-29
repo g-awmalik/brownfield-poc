@@ -34,9 +34,10 @@ module "spanner" {
     "app-database" = {
       version_retention_period = "3d"
       ddl                      = []
-      deletion_protection      = false
+      deletion_protection      = true
       database_iam             = []
-      enable_backup            = false
+      enable_backup            = true
+      backup_retention         = "1209600s"
       create_db                = true
     }
   }
@@ -52,7 +53,7 @@ resource "google_spanner_database_iam_member" "spanner_db_user" {
 }
 
 # ==============================================================================
-# 3. MULTI-REGIONAL CLOUD RUN SERVICES (DIRECT PUBLIC ACCESS)
+# 3. MULTI-REGIONAL CLOUD RUN SERVICES (SECURE INTERNAL & LOAD BALANCING ONLY)
 # ==============================================================================
 module "cloud_run" {
   source = "GoogleCloudPlatform/cloud-run/google//modules/v2"
@@ -64,7 +65,7 @@ module "cloud_run" {
   service_name           = "app-service-${each.key}"
   create_service_account = false
   service_account        = module.service_account.email
-  ingress                = "INGRESS_TRAFFIC_ALL"
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   members = ["allUsers"]
 
@@ -76,8 +77,34 @@ module "cloud_run" {
         SPANNER_INSTANCE_ID = element(split("/", module.spanner.spanner_instance_id), 3)
         SPANNER_DATABASE_ID = "app-database"
       }
+      startup_probe = {
+        initial_delay_seconds = 10
+        timeout_seconds       = 3
+        period_seconds        = 10
+        failure_threshold     = 3
+        http_get = {
+          path = "/"
+        }
+      }
+      liveness_probe = {
+        initial_delay_seconds = 15
+        timeout_seconds       = 3
+        period_seconds        = 10
+        failure_threshold     = 3
+        http_get = {
+          path = "/"
+        }
+      }
     }
   ]
+
+  vpc_access = {
+    egress = "ALL_TRAFFIC"
+    network_interfaces = {
+      network    = "projects/${var.project_id}/global/networks/default"
+      subnetwork = "projects/${var.project_id}/regions/${each.key}/subnetworks/default"
+    }
+  }
 }
 
 # ==============================================================================
@@ -103,9 +130,10 @@ module "lb-http" {
   project = var.project_id
   name    = "global-app-lb"
 
-  ssl                             = false
-  managed_ssl_certificate_domains = []
-  https_redirect                  = false
+  ssl                             = true
+  managed_ssl_certificate_domains = ["app.example.com"]
+  https_redirect                  = true
+  http_keep_alive_timeout_sec     = 600
 
   backends = {
     default = {
@@ -126,8 +154,8 @@ module "lb-http" {
         oauth2_client_secret = ""
       }
       log_config = {
-        enable      = false
-        sample_rate = null
+        enable      = true
+        sample_rate = 1.0
       }
     }
   }
@@ -143,7 +171,7 @@ module "log_export" {
   destination_uri        = "${module.destination.destination_uri}"
   filter                 = "severity >= ERROR"
   log_sink_name          = "storage_example_logsink"
-  parent_resource_id     = "sample-project"
+  parent_resource_id     = var.project_id
   parent_resource_type   = "project"
   unique_writer_identity = true
 }
