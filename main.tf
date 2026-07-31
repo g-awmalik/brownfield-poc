@@ -34,9 +34,10 @@ module "spanner" {
     "app-database" = {
       version_retention_period = "3d"
       ddl                      = []
-      deletion_protection      = false
+      deletion_protection      = true
       database_iam             = []
-      enable_backup            = false
+      enable_backup            = true
+      backup_retention         = "86400s"
       create_db                = true
     }
   }
@@ -64,7 +65,7 @@ module "cloud_run" {
   service_name           = "app-service-${each.key}"
   create_service_account = false
   service_account        = module.service_account.email
-  ingress                = "INGRESS_TRAFFIC_ALL"
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   members = ["allUsers"]
 
@@ -103,9 +104,9 @@ module "lb-http" {
   project = var.project_id
   name    = "global-app-lb"
 
-  ssl                             = false
-  managed_ssl_certificate_domains = []
-  https_redirect                  = false
+  ssl                             = true
+  managed_ssl_certificate_domains = ["app.example.com"]
+  https_redirect                  = true
 
   backends = {
     default = {
@@ -126,8 +127,8 @@ module "lb-http" {
         oauth2_client_secret = ""
       }
       log_config = {
-        enable      = false
-        sample_rate = null
+        enable      = true
+        sample_rate = 1.0
       }
     }
   }
@@ -140,10 +141,10 @@ module "lb-http" {
 module "log_export" {
   source                 = "terraform-google-modules/log-export/google"
   version                = "~> 11.0"
-  destination_uri        = "${module.destination.destination_uri}"
+  destination_uri        = module.destination.destination_uri
   filter                 = "severity >= ERROR"
   log_sink_name          = "storage_example_logsink"
-  parent_resource_id     = "sample-project"
+  parent_resource_id     = var.project_id
   parent_resource_type   = "project"
   unique_writer_identity = true
 }
