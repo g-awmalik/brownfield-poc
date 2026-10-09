@@ -1,0 +1,37 @@
+name: AutoCloud Operator
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: >-
+    autocloud-${{ github.event.pull_request.number ||
+    github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  autocloud:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+       contains(github.event.comment.body, '/autocloud'))
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run AutoCloud Operator
+        uses: g-awmalik/autocloud-operator@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTOCLOUD_OAUTH_CONFIG: ${{ secrets.AUTOCLOUD_OAUTH_CONFIG }}
