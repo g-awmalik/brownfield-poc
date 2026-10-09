@@ -1,4 +1,26 @@
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = ">= 5.27.0, < 7.0.0"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = ">= 5.27.0, < 7.0.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.1"
+    }
+  }
+}
+
 provider "google" {
+  project = var.project_id
+}
+
+provider "google-beta" {
   project = var.project_id
 }
 
@@ -32,9 +54,10 @@ module "spanner" {
     "app-database" = {
       version_retention_period = "3d"
       ddl                      = []
-      deletion_protection      = false
+      deletion_protection      = true
       database_iam             = []
-      enable_backup            = false
+      enable_backup            = true
+      backup_retention         = "259200s" # 3 days retention
       create_db                = true
     }
   }
@@ -43,14 +66,14 @@ module "spanner" {
 # Grant the Cloud Run Service Account access to the Spanner Database
 resource "google_spanner_database_iam_member" "spanner_db_user" {
   project  = var.project_id
-  instance = module.spanner.spanner_instance_id
+  instance = element(split("/", module.spanner.spanner_instance_id), 3)
   database = "app-database"
   role     = "roles/spanner.databaseUser"
   member   = "serviceAccount:${module.service_account.email}"
 }
 
 # ==============================================================================
-# 3. MULTI-REGIONAL CLOUD RUN SERVICES (DIRECT PUBLIC ACCESS)
+# 3. MULTI-REGIONAL CLOUD RUN SERVICES (RESTRICTED TO LOAD BALANCER INGRESS)
 # ==============================================================================
 module "cloud_run" {
   source = "GoogleCloudPlatform/cloud-run/google//modules/v2"
@@ -62,7 +85,7 @@ module "cloud_run" {
   service_name           = "app-service-${each.key}"
   create_service_account = false
   service_account        = module.service_account.email
-  ingress                = "INGRESS_TRAFFIC_ALL"
+  ingress                = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   members = ["allUsers"]
 
@@ -98,8 +121,9 @@ module "lb-http" {
   source  = "GoogleCloudPlatform/lb-http/google//modules/serverless_negs"
   version = "~> 12.0"
 
-  project = var.project_id
-  name    = "global-app-lb"
+  project               = var.project_id
+  name                  = "global-app-lb"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
 
   ssl                             = false
   managed_ssl_certificate_domains = []
@@ -124,8 +148,8 @@ module "lb-http" {
         oauth2_client_secret = ""
       }
       log_config = {
-        enable      = false
-        sample_rate = null
+        enable      = true
+        sample_rate = 1.0
       }
     }
   }
@@ -138,10 +162,10 @@ module "lb-http" {
 module "log_export" {
   source                 = "terraform-google-modules/log-export/google"
   version                = "~> 11.0"
-  destination_uri        = "${module.destination.destination_uri}"
+  destination_uri        = module.destination.destination_uri
   filter                 = "severity >= ERROR"
   log_sink_name          = "storage_example_logsink"
-  parent_resource_id     = "sample-project"
+  parent_resource_id     = var.project_id
   parent_resource_type   = "project"
   unique_writer_identity = true
 }
@@ -161,8 +185,18 @@ module "destination" {
   log_sink_writer_identity = module.log_export.writer_identity
 }
 
+# ==============================================================================
+# 6. STORAGE BUCKET (SECURED)
+# ==============================================================================
+
 resource "google_storage_bucket" "test_unsecured_bucket" {
-  name          = "g4g-operate-demo-test-bucket"
-  location      = "US"
-  force_destroy = true
+  name                        = "${var.project_id}-test-bucket"
+  location                    = "US"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+
+  versioning {
+    enabled = true
+  }
 }
