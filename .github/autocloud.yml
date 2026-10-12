@@ -3,7 +3,7 @@ project_id: "g4g-operate-demo"
 agent_id: "operator-awmalik"
 
 scenarios:
-  # Scenario 1: PR Code & IaC Review (Milestone 1 MVP)
+  # Scenario 1: PR Code & IaC Review
   code_changes:
     enabled: true
     triggers:
@@ -11,9 +11,10 @@ scenarios:
       - pull_request.synchronize
       - issue_comment.created
     trigger_command: "/autocloud review"
-    pr_mode: "companion_pr"
+    # Options: "inline_comments" (default), "companion_pr", "comment_only"
+    pr_mode: "inline_comments"
 
-  # Scenario 2: Issue & Bug Implementation (Milestone 2 / Post-MVP)
+  # Scenario 2: Issue & Bug Implementation (WORK IN PROGRESS - Not available yet)
   issue_implementation:
     enabled: false
     triggers:
