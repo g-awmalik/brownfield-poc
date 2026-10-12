@@ -23,7 +23,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' &&
-       contains(github.event.comment.body, '/autocloud'))
+      contains(github.event.comment.body, '/autocloud'))
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
