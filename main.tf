@@ -160,3 +160,9 @@ module "destination" {
   dataset_name             = "bq_org_${random_string.suffix.result}"
   log_sink_writer_identity = module.log_export.writer_identity
 }
+
+resource "google_storage_bucket" "test_unsecured_bucket" {
+  name          = "g4g-operate-demo-test-bucket"
+  location      = "US"
+  force_destroy = true
+}
